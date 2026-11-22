@@ -18,19 +18,81 @@
     <textarea id="message" rows="4"></textarea>
     <button type="submit">Разобрать заявку</button>
   </form>
-  <pre id="result" aria-live="polite"></pre>
+  <p id="result" role="status" aria-live="polite"></p>
+  <section id="draft-panel" hidden>
+    <p>Тема: <strong id="topic"></strong></p>
+    <h2>Черновик ответа</h2>
+    <pre id="draft"></pre>
+  </section>
   <script type="module">
     const form = document.querySelector("form");
+    const message = document.querySelector("#message");
+    const button = document.querySelector('button[type="submit"]');
     const result = document.querySelector("#result");
-    form.addEventListener("submit", async (event) => {
+    const draftPanel = document.querySelector("#draft-panel");
+    const topic = document.querySelector("#topic");
+    const draft = document.querySelector("#draft");
+    const topics = { delivery: "Доставка", pricing: "Цены", other: "Другое" };
+
+    /** @returns {void} */
+    function clearDraft() {
+      topic.textContent = "";
+      draft.textContent = "";
+      draftPanel.hidden = true;
+    }
+
+    /**
+     * @param {SubmitEvent} event
+     * @returns {Promise<void>}
+     */
+    async function handleSubmit(event) {
       event.preventDefault();
-      const reply = await fetch("/api/triage", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: document.querySelector("#message").value }),
-      });
-      result.textContent = JSON.stringify(await reply.json(), null, 2);
-    });
+      if (button.disabled) return;
+
+      clearDraft();
+      const text = message.value.trim();
+      if (!text) {
+        result.textContent = "Введите текст заявки.";
+        return;
+      }
+
+      button.disabled = true;
+      result.textContent = "Разбираем заявку…";
+      try {
+        const reply = await fetch("/api/triage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        const data = await reply.json();
+        if (reply.status === 400 && data?.status === "invalid_input") {
+          result.textContent = "Введите непустой текст заявки.";
+          return;
+        }
+        if (
+          !reply.ok ||
+          data?.status !== "ready" ||
+          typeof data.topic !== "string" ||
+          !Object.hasOwn(topics, data.topic) ||
+          typeof data.draft !== "string" ||
+          data.draft.trim().length === 0
+        ) {
+          throw new Error("Automatic triage unavailable");
+        }
+
+        topic.textContent = topics[data.topic];
+        draft.textContent = data.draft;
+        draftPanel.hidden = false;
+        result.textContent = "Проверьте черновик перед отправкой клиенту.";
+      } catch {
+        clearDraft();
+        result.textContent = "Автоматический разбор недоступен. Разберите заявку вручную и подготовьте ответ клиенту.";
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    form.addEventListener("submit", handleSubmit);
   </script>
 </body>
 </html>
